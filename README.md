@@ -52,3 +52,12 @@ The `outputs/` folder contains aggregate outputs and generated documents from th
 ## Resume wording
 
 Use conservative wording: this is an observational treatment-strategy analysis. Early vasopressor use is also a marker of shock severity; crude mortality differences should not be interpreted as vasopressor harm.
+
+## Documentation versions
+
+The `docs/` folder contains four audience-specific report versions:
+
+- `docs/academic_report_en.md` - academic English report.
+- `docs/academic_report_zh.md` - academic Chinese report.
+- `docs/presentation_brief_en.md` - English briefing version for medical/business stakeholders.
+- `docs/presentation_brief_zh.md` - 中文汇报版，适合给医学团队、老板或在职人士快速过项目。
