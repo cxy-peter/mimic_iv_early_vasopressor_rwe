@@ -1,0 +1,180 @@
+---
+title: "MIMIC-IV ICU Treatment Strategy RWE: Early Vasopressor vs No Early Vasopressor by 6 Hours"
+author: "Xinyu Chen"
+output: html_document
+params:
+  run_pipeline: false
+  mimic_root: "/path/to/mimic-iv-3.1"
+  outdir: "../outputs_reproduced"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(scales)
+project_root <- if (basename(getwd()) == "notebooks") normalizePath("..") else normalizePath(".")
+find_output <- function(name) {
+  candidates <- c(
+    file.path(project_root, "outputs_reproduced", name),
+    file.path(project_root, "outputs", name)
+  )
+  hit <- candidates[file.exists(candidates)][1]
+  if (is.na(hit)) return(NA_character_)
+  hit
+}
+```
+
+# 1. Research question and groups compared
+
+This project compares two ICU treatment-strategy groups among adult, first-ICU, sepsis-coded MIMIC-IV stays:
+
+| Group | Operational definition |
+|---|---|
+| Treatment | First vasopressor initiation within 0--6 hours after ICU admission |
+| Comparator | No vasopressor initiation within 0--6 hours after ICU admission |
+
+The comparator is a **6-hour landmark comparator**, not a never-treated group. A patient who starts vasopressors after 6 hours belongs to the comparator under the primary strategy definition.
+
+# 2. Target-trial-style design
+
+| Element | Definition |
+|---|---|
+| Population | Adults, first ICU stay, sepsis-coded hospitalization, observed through the 6h landmark |
+| Time zero | ICU admission time (`icustays.intime`) |
+| Treatment | First vasopressor initiation within 0--6h |
+| Comparator | No vasopressor initiation within 0--6h |
+| Outcome | In-hospital mortality (`hospital_expire_flag`) |
+| Baseline adjustment | Age, sex, admission type, first ICU unit, diagnosis count, first-6h vitals/labs |
+| Main diagnostics | Table 1/SMD, propensity score overlap, love plot, crude vs adjusted results |
+
+# 3. Why the final pipeline is consolidated
+
+Earlier drafts separated extraction and analysis into different files. The later analysis-only file contained an important technical fix: after dummy encoding categorical covariates, the statsmodels weighted-logistic design matrix must be converted to numeric/float. Otherwise, bool/object columns can trigger model-fitting errors.
+
+The final script `code/mimic_iv_early_vasopressor_pipeline.py` now combines both versions:
+
+- extraction mode builds the cohort from raw MIMIC-IV CSV/CSV.GZ files;
+- analysis-only mode reruns the downstream PS/IPTW/AIPW analysis from an existing cohort CSV;
+- the dtype fix is integrated into the weighted logistic model section.
+
+# 4. Cohort creation logic
+
+The executable implementation is in `code/mimic_iv_early_vasopressor_pipeline.py`. The key cohort construction steps are reproduced below so the reader can see how the analysis dataset is created, not only how output CSV files are read.
+
+```{sql, eval=FALSE}
+-- 1) First ICU stay per patient
+CREATE TEMP TABLE first_icu AS
+SELECT * EXCLUDE(rn)
+FROM (
+  SELECT i.*, ROW_NUMBER() OVER (PARTITION BY subject_id ORDER BY intime) AS rn
+  FROM icustays i
+)
+WHERE rn = 1;
+
+-- 2) Diagnosis-code sepsis proxy
+CREATE TEMP TABLE sepsis_hadm AS
+SELECT DISTINCT hadm_id
+FROM diagnoses_icd
+WHERE
+  (icd_version = 9 AND (icd_code LIKE '038%' OR icd_code IN ('99591','99592','78552')))
+  OR
+  (icd_version = 10 AND (icd_code LIKE 'A40%' OR icd_code LIKE 'A41%' OR icd_code LIKE 'R652%'));
+
+-- 3) Adult first-ICU sepsis-coded base cohort
+--    Time zero = ICU admission time.
+--    The cohort excludes patients not observable through the 6h landmark.
+
+-- 4) Vasopressor items are identified from ICU d_items labels:
+--    norepinephrine, epinephrine, vasopressin, phenylephrine, dopamine.
+
+-- 5) Treatment = first vasopressor start between ICU admission and ICU admission + 6h.
+```
+
+# 5. Run the pipeline from the notebook
+
+Set `run_pipeline: true` in the YAML header or run the command below from the terminal. It is disabled by default because full local extraction can take time and requires credentialed MIMIC-IV files.
+
+```{r run-pipeline, eval=params$run_pipeline}
+cmd <- sprintf(
+  'python "%s" --mimic_root "%s" --outdir "%s" --treatment_window_hours 6',
+  file.path(project_root, "code", "mimic_iv_early_vasopressor_pipeline.py"),
+  params$mimic_root,
+  file.path(project_root, "outputs_reproduced")
+)
+system(cmd)
+```
+
+Analysis-only mode after extraction:
+
+```{r analysis-only-command, eval=FALSE}
+system(sprintf(
+  'python "%s" --cohort_csv "%s" --outdir "%s" --analysis_only',
+  file.path(project_root, "code", "mimic_iv_early_vasopressor_pipeline.py"),
+  file.path(project_root, "outputs_reproduced", "mimic_icu_vasopressor_cohort.csv"),
+  file.path(project_root, "outputs_reproduced")
+))
+```
+
+# 6. Cohort flow and crude comparison
+
+```{r cohort-flow}
+cohort_path <- find_output("cohort_flow_summary.csv")
+if (!is.na(cohort_path)) {
+  cohort <- read_csv(cohort_path, show_col_types = FALSE)
+  cohort
+} else {
+  cat("No cohort_flow_summary.csv found yet. Run the pipeline or inspect outputs/.")
+}
+```
+
+```{r crude-rates}
+crude_path <- find_output("crude_mortality_by_treatment_summary.csv")
+if (!is.na(crude_path)) {
+  crude <- read_csv(crude_path, show_col_types = FALSE)
+  print(crude)
+  crude %>%
+    mutate(group_label = factor(group_label, levels = group_label)) %>%
+    ggplot(aes(x = group_label, y = hospital_mortality_rate)) +
+    geom_col() +
+    geom_text(aes(label = percent(hospital_mortality_rate, accuracy = 0.1)), vjust = -0.3) +
+    labs(x = "Treatment strategy group", y = "Crude hospital mortality", title = "Crude mortality by early vasopressor strategy") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 15, hjust = 1))
+}
+```
+
+# 7. Propensity score and balance diagnostics
+
+The pipeline estimates a propensity score for early vasopressor initiation using pre-exposure or first-6h baseline variables. It then computes stabilized IPTW and trims extreme weights at the 1st and 99th percentiles.
+
+```{r balance-summary}
+bal_path <- find_output("balance_summary.csv")
+if (!is.na(bal_path)) {
+  read_csv(bal_path, show_col_types = FALSE)
+} else {
+  cat("No balance_summary.csv found yet.")
+}
+```
+
+If reproduced locally, inspect:
+
+```text
+outputs_reproduced/propensity_overlap.png
+outputs_reproduced/love_plot.png
+outputs_reproduced/table1_smd_before_after.csv
+```
+
+# 8. Adjusted estimates and interpretation
+
+```{r aipw-results}
+aipw_path <- find_output("aipw_results_summary.csv")
+if (!is.na(aipw_path)) {
+  read_csv(aipw_path, show_col_types = FALSE)
+} else {
+  cat("No AIPW summary found yet.")
+}
+```
+
+The crude mortality contrast should be interpreted cautiously. Early vasopressor initiation is also a marker of shock severity and clinical urgency. The adjusted analysis is designed to show how a target-trial-style workflow can reduce observable imbalance; it does not prove a randomized causal effect.

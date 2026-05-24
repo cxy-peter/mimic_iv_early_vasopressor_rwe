@@ -1,0 +1,8 @@
+metric,value
+analytic_n,9502.0
+early_vasopressor_0_6h_n,3772.0
+no_early_vasopressor_by_6h_n,5730.0
+early_vasopressor_rate,0.397
+overall_hospital_mortality,0.283
+early_vasopressor_crude_mortality,0.329
+no_early_vasopressor_crude_mortality,0.252

@@ -1,0 +1,33 @@
+# Local data and outputs that should not be committed
+__pycache__/
+*.pyc
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+.DS_Store
+
+# Large or protected raw data
+*.csv.gz
+*.parquet
+*.feather
+*.sas7bdat
+*.dta
+*.xpt
+*.XPT
+
+# MIMIC / patient-level data
+mimic-iv*/
+hosp/
+icu/
+analysis_dataset_with_weights.csv
+mimic_icu_vasopressor_cohort.csv
+01_base_sepsis_first_icu_cohort.csv
+02_first_vasopressor_by_stay.csv
+03_vitals_6h.csv
+03_labs_6h.csv
+
+# Reproduced outputs; commit only curated outputs if needed
+outputs_reproduced/
+outputs_local/
+results/

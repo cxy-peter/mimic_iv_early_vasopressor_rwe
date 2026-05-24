@@ -1,0 +1,4 @@
+balance_metric,value
+numeric covariates with |SMD| < 0.1 after IPTW,13/13
+max |SMD| before IPTW,0.288
+max |SMD| after IPTW,0.046

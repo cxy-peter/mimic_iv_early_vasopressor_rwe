@@ -1,0 +1,2 @@
+estimand,estimate_pp,ci_low_pp,ci_high_pp,n,treated_n,control_n
+AIPW risk difference: early vasopressor 0-6h vs no early vasopressor by 6h,1.17,-0.52,2.87,9502,3772,5730
